@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Semantic StackOverflow Search</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Semantic StackOverflow Search</h1>
+    <p class="subtitle">Ask a programming question and find the closest StackOverflow Q&A.</p>
+
+    <form id="search-form" class="search-box">
+      <input
+        id="query-input"
+        type="text"
+        placeholder="Example: how to declare array in python"
+        required
+      />
+      <button type="submit">Search</button>
+    </form>
+
+    <section id="results" class="results"></section>
+  </main>
+
+  <script>
+    const form = document.getElementById('search-form');
+    const input = document.getElementById('query-input');
+    const resultsEl = document.getElementById('results');
+
+    function renderResults(items) {
+      if (!items.length) {
+        resultsEl.innerHTML = '<p class="empty">No results found.</p>';
+        return;
+      }
+
+      resultsEl.innerHTML = items.map(item => `
+        <article class="card">
+          <h3>${item.question}</h3>
+          <p>${item.answer}</p>
+          <span class="score">Similarity: ${item.score.toFixed(4)}</span>
+        </article>
+      `).join('');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+
+      resultsEl.innerHTML = '<p class="loading">Searching...</p>';
+
+      try {
+        const response = await fetch('/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query })
+        });
+
+        if (!response.ok) {
+          throw new Error('Search request failed');
+        }
+
+        const data = await response.json();
+        renderResults(data);
+      } catch (err) {
+        resultsEl.innerHTML = '<p class="error">Something went wrong. Please try again.</p>';
+      }
+    });
+  </script>
+</body>
+</html>
