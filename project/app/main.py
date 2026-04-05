@@ -15,54 +15,51 @@ from .search import SemanticSearchEngine
 
 
 class SearchRequest(BaseModel):
-    """Incoming payload for /search endpoint."""
+    """Request body model for /search endpoint."""
 
+    # We require at least 2 characters to avoid empty/noisy requests.
     query: str = Field(..., min_length=2, description="User search query")
 
 
+# Create the FastAPI app.
 app = FastAPI(title="Semantic StackOverflow Search")
+
+# Resolve folders relative to project root.
 base_dir = Path(__file__).resolve().parents[1]
 
+# Configure template and static folders.
 templates = Jinja2Templates(directory=str(base_dir / "templates"))
 app.mount("/static", StaticFiles(directory=str(base_dir / "static")), name="static")
 
+# Create semantic search engine (dataset path can be replaced by load_data.py output).
 engine = SemanticSearchEngine(data_path=base_dir / "data" / "dataset.json")
+
+# Store startup errors so the server stays alive and returns clear API messages.
 startup_error: str | None = None
 
 
 @app.on_event("startup")
 def startup_event() -> None:
-    """Build FAISS index on server startup.
-
-    Startup failures are stored and surfaced through API responses instead of
-    crashing the whole server process.
-    """
+    """Load dataset and build FAISS index once at app startup."""
     global startup_error
     try:
         engine.load()
         startup_error = None
-    except Exception as exc:  # Keep the server alive with useful error details.
+    except Exception as exc:
         startup_error = str(exc)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    """Render the search UI."""
+    """Serve the HTML frontend."""
     return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    """Basic health endpoint for quick diagnostics."""
-    if startup_error:
-        return {"status": "degraded", "detail": startup_error}
-    return {"status": "ok"}
 
 
 @app.post("/search")
 def search(payload: SearchRequest) -> list[dict]:
-    """Run semantic search and return top results as JSON."""
+    """Run semantic search and return top 5 results as JSON."""
     if startup_error:
+        # If startup failed, return a helpful message to the UI.
         raise HTTPException(status_code=503, detail=startup_error)
 
     query = payload.query.strip()
