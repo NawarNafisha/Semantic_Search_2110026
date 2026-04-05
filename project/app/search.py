@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List
+from typing import Any
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from .utils import normalize_vectors, shorten_text
+from .utils import adapt_vector_dim, normalize_vectors, shorten_text
 
 
 class SemanticSearchEngine:
@@ -18,48 +18,77 @@ class SemanticSearchEngine:
 
     def __init__(self, data_path: Path) -> None:
         self.data_path = data_path
-        self.records: List[dict] = []
+        self.records: list[dict[str, Any]] = []
         self.index: faiss.IndexFlatIP | None = None
+        self.embedding_dim: int | None = None
 
-        # Use same model for query encoding (as requested).
+        # Lightweight model requiring no API key.
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
     def load(self) -> None:
         """Load JSON dataset and build FAISS cosine-similarity index."""
+        if not self.data_path.exists():
+            raise FileNotFoundError(
+                f"Dataset file not found at {self.data_path}. "
+                "Run: python -m app.load_data"
+            )
+
         with self.data_path.open("r", encoding="utf-8") as f:
-            self.records = json.load(f)
+            data = json.load(f)
 
-        if not self.records:
-            raise ValueError("Dataset is empty. Run app/load_data.py first.")
+        if not isinstance(data, list) or not data:
+            raise ValueError(
+                "Dataset is empty or invalid JSON list. "
+                "Run: python -m app.load_data"
+            )
 
-        # Stack embeddings into a matrix.
-        embeddings = np.array([r["embeddings"] for r in self.records], dtype=np.float32)
+        cleaned_records: list[dict[str, Any]] = []
+        cleaned_vectors: list[list[float]] = []
+
+        for row in data:
+            # Basic validation to prevent runtime crashes.
+            if not isinstance(row, dict):
+                continue
+            if "question" not in row or "answer" not in row or "embeddings" not in row:
+                continue
+
+            vector = np.asarray(row["embeddings"], dtype=np.float32).flatten()
+            if vector.size == 0:
+                continue
+
+            cleaned_records.append(row)
+            cleaned_vectors.append(vector.tolist())
+
+        if not cleaned_records:
+            raise ValueError("No valid rows found in dataset.json")
+
+        embeddings = np.asarray(cleaned_vectors, dtype=np.float32)
         embeddings = normalize_vectors(embeddings)
 
-        # IndexFlatIP + normalized vectors => cosine similarity.
-        dim = embeddings.shape[1]
-        self.index = faiss.IndexFlatIP(dim)
+        self.embedding_dim = embeddings.shape[1]
+        self.index = faiss.IndexFlatIP(self.embedding_dim)
         self.index.add(embeddings)
+        self.records = cleaned_records
 
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
+    def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         """Return top-k semantically similar Q&A pairs."""
-        if self.index is None:
-            raise RuntimeError("Index not initialized. Call load() first.")
+        if self.index is None or self.embedding_dim is None:
+            raise RuntimeError("Search index not initialized.")
 
-        # Convert input text into embedding.
         query_embedding = self.model.encode([query], convert_to_numpy=True).astype(np.float32)
+        query_embedding = adapt_vector_dim(query_embedding, self.embedding_dim)
         query_embedding = normalize_vectors(query_embedding)
 
-        # Retrieve nearest vectors.
-        scores, indices = self.index.search(query_embedding, top_k)
+        k = min(top_k, len(self.records))
+        scores, indices = self.index.search(query_embedding, k)
 
-        results: list[dict] = []
+        results: list[dict[str, Any]] = []
         for score, idx in zip(scores[0], indices[0]):
             record = self.records[int(idx)]
             results.append(
                 {
-                    "question": record["question"],
-                    "answer": shorten_text(record["answer"]),
+                    "question": str(record["question"]),
+                    "answer": shorten_text(str(record["answer"])),
                     "score": float(score),
                 }
             )

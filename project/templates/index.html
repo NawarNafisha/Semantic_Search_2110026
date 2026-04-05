@@ -29,6 +29,12 @@
     const input = document.getElementById('query-input');
     const resultsEl = document.getElementById('results');
 
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     function renderResults(items) {
       if (!items.length) {
         resultsEl.innerHTML = '<p class="empty">No results found.</p>';
@@ -37,9 +43,9 @@
 
       resultsEl.innerHTML = items.map(item => `
         <article class="card">
-          <h3>${item.question}</h3>
-          <p>${item.answer}</p>
-          <span class="score">Similarity: ${item.score.toFixed(4)}</span>
+          <h3>${escapeHtml(item.question)}</h3>
+          <p>${escapeHtml(item.answer)}</p>
+          <span class="score">Similarity: ${Number(item.score).toFixed(4)}</span>
         </article>
       `).join('');
     }
@@ -58,14 +64,16 @@
           body: JSON.stringify({ query })
         });
 
+        const payload = await response.json();
+
         if (!response.ok) {
-          throw new Error('Search request failed');
+          const message = payload?.detail || 'Search request failed';
+          throw new Error(message);
         }
 
-        const data = await response.json();
-        renderResults(data);
+        renderResults(payload);
       } catch (err) {
-        resultsEl.innerHTML = '<p class="error">Something went wrong. Please try again.</p>';
+        resultsEl.innerHTML = `<p class="error">${escapeHtml(err.message || 'Something went wrong. Please try again.')}</p>`;
       }
     });
   </script>
